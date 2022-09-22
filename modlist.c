@@ -23,6 +23,16 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 	int n;
 	char kbuf[MAX_K];
 
+	int available_space = MAX_K-1;
+
+	if ((*off) > 0) /* The application can write in this entry just once !! */
+    	return 0;
+  
+	if (len > available_space) {
+		printk(KERN_INFO "clipboard: not enough space!!\n");
+		return -ENOSPC;
+	}
+
 	/* Transfer data from user to kernel space */
 	if (copy_from_user( &kbuf[0], buf, len ))  
 		return -EFAULT;
@@ -41,7 +51,7 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 	else{
 		return -EINVAL;
 	}
-	
+
 	*off+=len;  
 	
 	return 0;

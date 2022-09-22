@@ -1,0 +1,23 @@
+si metemos comandos erróneos debemos usar la llamada sscanf.
+
+
+//write
+int sscanf(char *buf, char *format, ...){
+	char kbuf[MAX_K]
+	int n;
+	...
+	
+	if(sscanf(kbuf, "add %i", &n) == 1){ //nos ha reconocido el comando
+		
+	}
+	else if(sscanf(kbuf, "remove %i", &n)
+}
+
+//read      [1, 237] -> '1' '\n' '2' '3' '7' '\n'
+
+list_forehead(){
+	char *wrptr = kbuf;
+	
+	//.....
+	wrptr += sprintf(wrptr, "%d\n", 
+}
