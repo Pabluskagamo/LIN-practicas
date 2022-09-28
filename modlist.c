@@ -20,9 +20,12 @@ struct list_item{
 
 struct list_head head;
 
+struct list_head *tail;
+
+
 static ssize_t myproc_read(struct file *filp, char __user *buf, size_t len, loff_t *off) {
   
-	char kbuf[MAX_K];
+  char kbuf[MAX_K];
 	struct list_item* item = NULL;
 	struct list_head* cur_node = NULL;
 	
@@ -60,23 +63,63 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 
 	int available_space = MAX_K-1;
 
+	struct list_item *it = NULL;
+	struct list_head *act_node = NULL;
+	struct list_head *aux = NULL;
+
+	printk(KERN_INFO "modlist: %s\n", kbuf);
+
 	if ((*off) > 0) /* The application can write in this entry just once !! */
     	return 0;
   
 	if (len > available_space) {
-		printk(KERN_INFO "clipboard: not enough space!!\n");
+		printk(KERN_INFO "modlist: not enough space!!\n");
 		return -ENOSPC;
 	}
 
-	struct list_item *newNode;
+	/* Transfer data from user to kernel space */
+	if (copy_from_user( &kbuf[0], buf, len ))  
+		return -EFAULT;
 
 
-	newNode = kmalloc(sizeof(struct list_item), GFP_KERNEL);
-	newNode->data = 25;
+	if(sscanf(kbuf, "add %i", &n) == 1){
+		//meter n en la lista
+		printk(KERN_INFO "add\n");
+		
+		it = kmalloc(sizeof(struct list_item), GFP_KERNEL); 
+		it->data = n; //meto el numero en it
+		
+		list_add(&it->links, tail);
+		tail = &it->links;
 
-	list_add_tail(&newNode->links, &head);
+	}
+	else if(sscanf(kbuf, "remove %i", &n) == 1){
+		//eliminar de la lista
+	
+		list_for_each_safe(act_node, aux, &head){
+			it = list_entry(act_node, struct list_item, links);
+			
+			if(it->data == n){
+				printk(KERN_INFO "Procedo a borrar el %i", n);
+				list_del(act_node);
+				kfree(it);
+			}
+			
+		}
+	}
+	else if(strcmp(kbuf, "cleanup\n") == 0){
+	 	printk(KERN_INFO "cleanup\n");
 
-	printk(KERN_INFO "len:", "%d", len);
+		list_for_each_safe(act_node, aux, &head){
+			it = list_entry(act_node, struct list_item, links);
+
+			list_del(act_node);					//borrar
+			kfree(it); //liberar memoria
+		}
+	}
+	else{
+		return -EINVAL;
+	}
 
 	*off+=len;  
 	
@@ -100,25 +143,9 @@ int modulo_lin_init(void)
     } else {
       printk(KERN_INFO "Modlist: Module loaded\n");
     }
-
+	
 	INIT_LIST_HEAD(&head);
-
-	struct list_item *newNode;
-
-	newNode = kmalloc(sizeof(struct list_item), GFP_KERNEL);
-	newNode->data = 25;
-
-	list_add_tail(&newNode->links, &head);
-
-	newNode = kmalloc(sizeof(struct list_item), GFP_KERNEL);
-	newNode->data = 29;
-
-	list_add_tail(&newNode->links, &head);
-
-	newNode = kmalloc(sizeof(struct list_item), GFP_KERNEL);
-	newNode->data = 566;
-
-	list_add_tail(&newNode->links, &head);
+	tail = &head;
 
 	/* Devolver 0 para indicar una carga correcta del módulo */
 	return 0;
