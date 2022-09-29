@@ -6,7 +6,7 @@
 
 MODULE_LICENSE("GPL"); 	/*  Licencia del modulo */
 
-#define MAX_K       PAGE_SIZE
+#define MAX_K       128
 
 
 //Entradas en /proc
@@ -67,8 +67,6 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 	struct list_head *act_node = NULL;
 	struct list_head *aux = NULL;
 
-	printk(KERN_INFO "modlist: %s\n", kbuf);
-
 	if ((*off) > 0) /* The application can write in this entry just once !! */
     	return 0;
   
@@ -105,6 +103,10 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 				kfree(it);
 			}
 			
+			if(list_empty_careful(&head) == 1){
+				INIT_LIST_HEAD(&head);
+				tail = &head;
+			}
 		}
 	}
 	else if(strcmp(kbuf, "cleanup\n") == 0){
@@ -116,6 +118,10 @@ static ssize_t myproc_write(struct file *filp, const char __user *buf, size_t le
 			list_del(act_node);					//borrar
 			kfree(it); //liberar memoria
 		}
+
+		INIT_LIST_HEAD(&head);
+		tail = &head;
+
 	}
 	else{
 		return -EINVAL;
