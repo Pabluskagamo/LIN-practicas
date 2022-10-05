@@ -34,7 +34,8 @@ int main(void)
     /* Loop that reads data from the file and prints its contents to stdout */
     while((read_chars=syscall(SYS_read,fd,buf,BUFSIZE))>0){
         buf[read_chars]='\0';
-        printf("%s",buf);            
+        // printf("%s",buf); /asi estaba antes
+        syscall(SYS_write, 1, buf, read_chars); //modificacion con syscall            
     }
      
     if (read_chars<0){
