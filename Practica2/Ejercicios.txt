@@ -1,0 +1,11 @@
+Respuestas de Pablo a los ejercicicios de la Practica2:
+
+Ejercicio1:
+
+¿Qué llamada al sistema invoca el programa cpuinfo.c mediante syscall()?
+En este caso se está invocando la llamada al sistema read ya que se esta invocando
+a la función syscall con el numero de llamada al sistema 0 el cual se corresponde
+con la llamada read en la tabla de llamadas al sistema correspondiente
+a la arquitectura x86
+
+Parte 2: Codigo modificado en el fichero
