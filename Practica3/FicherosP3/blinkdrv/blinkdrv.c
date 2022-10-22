@@ -125,70 +125,85 @@ static ssize_t blink_write(struct file *file, const char *user_buffer,
 	kbuf[len] = '\0';
 
 	char *token;
-
-	memset(message,0,NR_BYTES_BLINK_MSG);
-
 	char* puntero = kbuf;
-	
-	printk(KERN_INFO "Antes");
-	token = strsep(&puntero, ",");
-	while(token != NULL){
-		unsigned int led, color;
 
-		printk(KERN_INFO "%s", token);
-		
-		if(sscanf(token, "%u:%x", &led, &color) != 2){
-			return -EINVAL;
-		}
-		
-		message[led] = color;	
+	if(len != 1){
 		token = strsep(&puntero, ",");
+		while(token != NULL){
+			unsigned int led, color;
+			
+			if(sscanf(token, "%u:%x", &led, &color) != 2){
+				return -EINVAL;
+			}
 
-		printk(KERN_INFO "Led=%d y color=%x\n",led, color);
-	}
+			/* zero fill*/
+			memset(message,0,NR_BYTES_BLINK_MSG);
 
-	// /* Pick a color and get ready for the next invocation*/		
-	// color=sample_colors[color_cnt++];
+			/* Fill up the message accordingly */
+			message[0]='\x05';
+			message[1]=0x00;
+			message[2]=led; 
+			message[3]=((color>>16) & 0xff);
+			message[4]=((color>>8) & 0xff);
+			message[5]=(color & 0xff);
+			
+			printk(KERN_INFO "Blinkstick: Encender Led=%d con color=%x\n",led, color);
+			message[led] = color;
+			/* 
+			* Send message (URB) to the Blinkstick device 
+			* and wait for the operation to complete 
+			*/
+			retval=usb_control_msg(dev->udev,	
+				usb_sndctrlpipe(dev->udev,00), /* Specify endpoint #0 */
+				USB_REQ_SET_CONFIGURATION, 
+				USB_DIR_OUT| USB_TYPE_CLASS | USB_RECIP_DEVICE,
+				0x5,	/* wValue */
+				0, 	/* wIndex=Endpoint # */
+				message,	/* Pointer to the message */ 
+				NR_BYTES_BLINK_MSG, /* message's size in bytes */
+				0);		
 
-	// /* Reset the color counter if necessary */	
-	// if (color_cnt == NR_SAMPLE_COLORS)
-	// 	color_cnt=0;
-	
-	// /* zero fill*/
-	// memset(message,0,NR_BYTES_BLINK_MSG);
+			if (retval<0){
+				printk(KERN_ALERT "Executed with retval=%d\n",retval);
+				goto out_error;		
+			}
 
-	// /* Fill up the message accordingly */
-	// message[0]='\x05';
-	// message[1]=0x00;
-	// message[2]=0; 
-	// message[3]=((color>>16) & 0xff);
- 	// message[4]=((color>>8) & 0xff);
- 	// message[5]=(color & 0xff);
-
-
-	for (i=0;i<NR_LEDS;i++){
-
-		message[2]=i; /* Change Led number in message */
-	
-		/* 
-		 * Send message (URB) to the Blinkstick device 
-		 * and wait for the operation to complete 
-		 */
-		retval=usb_control_msg(dev->udev,	
-			 usb_sndctrlpipe(dev->udev,00), /* Specify endpoint #0 */
-			 USB_REQ_SET_CONFIGURATION, 
-			 USB_DIR_OUT| USB_TYPE_CLASS | USB_RECIP_DEVICE,
-			 0x5,	/* wValue */
-			 0, 	/* wIndex=Endpoint # */
-			 message,	/* Pointer to the message */ 
-			 NR_BYTES_BLINK_MSG, /* message's size in bytes */
-			 0);		
-
-		if (retval<0){
-			printk(KERN_ALERT "Executed with retval=%d\n",retval);
-			goto out_error;		
+			token = strsep(&puntero, ",");
 		}
+	}else{
+		unsigned int color = 0x000000;
+
+		/* Fill up the message with 0x000000 */
+		message[0]='\x05';
+		message[1]=0x00;
+		message[2]=0; 
+		message[3]=((color>>16) & 0xff);
+		message[4]=((color>>8) & 0xff);
+		message[5]=(color & 0xff);
+
+		for(i = 0; i<NR_LEDS;i++){
+			message[2] = i;
+
+			retval=usb_control_msg(dev->udev,	
+				usb_sndctrlpipe(dev->udev,00), /* Specify endpoint #0 */
+				USB_REQ_SET_CONFIGURATION, 
+				USB_DIR_OUT| USB_TYPE_CLASS | USB_RECIP_DEVICE,
+				0x5,	/* wValue */
+				0, 	/* wIndex=Endpoint # */
+				message,	/* Pointer to the message */ 
+				NR_BYTES_BLINK_MSG, /* message's size in bytes */
+				0);		
+
+			if (retval<0){
+				printk(KERN_ALERT "Executed with retval=%d\n",retval);
+				goto out_error;		
+			}
+
+		}
+
 	}
+
+	
 
 	kfree(message);
 	(*off)+=len;
