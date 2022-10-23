@@ -1,0 +1,1 @@
+cmd_/home/kernel/Documentos/LIN-practicas/Practica2/Modleds/Module.symvers := sed 's/ko$$/o/' /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modules.order | scripts/mod/modpost -m    -o /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/Module.symvers -e -i Module.symvers   -T -

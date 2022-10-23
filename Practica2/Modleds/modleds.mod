@@ -1,0 +1,2 @@
+/home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.o
+

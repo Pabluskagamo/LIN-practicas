@@ -1,0 +1,1 @@
+cmd_/home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.ko := ld -r -m elf_x86_64  --build-id=sha1  -T scripts/module.lds -o /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.ko /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.o /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.mod.o;  true

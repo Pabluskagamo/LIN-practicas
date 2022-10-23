@@ -1,0 +1,1 @@
+cmd_/home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.mod := { echo  /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.o;  echo; } > /home/kernel/Documentos/LIN-practicas/Practica2/Modleds/modleds.mod

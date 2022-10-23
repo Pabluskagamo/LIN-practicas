@@ -148,7 +148,6 @@ static ssize_t blink_write(struct file *file, const char *user_buffer,
 			message[5]=(color & 0xff);
 			
 			printk(KERN_INFO "Blinkstick: Encender Led=%d con color=%x\n",led, color);
-			message[led] = color;
 			/* 
 			* Send message (URB) to the Blinkstick device 
 			* and wait for the operation to complete 
