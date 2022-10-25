@@ -1,0 +1,51 @@
+Respuesta a los ejercicios de la práctica 3 Pablo:
+
+Ejercicio 1:
+1.
+Chardev2: La ruta es /dev/chardev
+
+2. En el fichero /proc/devices
+
+3.
+Chardev2: En este caso el driver tiene asignado el minor number 0
+En este caso la llamada del driver que asigna el minor number es alloc_chrdev_region
+o device_create(DUDAS).
+
+
+ChardevMisc: En este caso el driver tiene asignado el minor number 59, con major number 10.
+En este caso la llamada del driver que asigna el minor number es misc_register.
+
+4.Obtenemos un mesaje de error, error de escritura: Operacion no permitida.
+
+Esto ocurre por que no hemos definido en este caso la operacion write del driver, ya que este
+no permite esa funcionalidad. La funcion esta definida pero no hace nada, solo devuelve un error.
+
+
+Ejercicio 2:
+ 
+Si en device_create se produce un error, devuelve un puntero a la estructura el cual permite almacenar
+el codigo de error y acceder a el mediante la macro ERR_PTR() tambien es posible
+comprobar si se ha producido error con la macro IS_ERR() y acceder a su codigo(negativo) con PTR_ERR().
+El uso de estas macros se puede comprobar en el fichero chardev.c (Chardev2) donde en la llamada a 
+device_create posteriormente a esta se compruba si ha habido error y en ese caso se devuelve el codigo
+de este.
+
+Ejercicio 3:
+
+3.1: DUDAS.
+
+3.2: La llamada a la API es dev_get_drvdata();
+
+3.3: En la operacion open() en la estructura file en su campo private_data se guarda 
+un puntero a la estructura privada. De este modo luego en la operacion read() se puede obtener
+dicha estructura para su uso. Por ultimo en la operacion release() tambien se puede acceder a 
+esta estructura y modificar su contador de dispositivos abiertos
+
+
+Ejercicio 4:
+La implementacion de las funciones read() y write() son iguales en ambos casos ya que lo que cambia es la forma de llamar a dichas operaciones. Donde si hay diferencias esen el module_init y el module_exit donde en clipboard(/proc) se crea una entrada en /proc mientras que en clipboard-dev se crea un fichero 
+de dispositivo mendiante las llamadas correspondientes.
+
+
+
+

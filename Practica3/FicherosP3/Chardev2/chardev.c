@@ -128,6 +128,8 @@ int init_module(void)
     printk(KERN_INFO "the driver try to cat and echo to /dev/%s.\n", DEVICE_NAME);
     printk(KERN_INFO "Remove the module when done.\n");
 
+    printk(KERN_INFO "I was assigned minor number %d. To talk to\n", minor);
+
     return 0;
 
 error_device:

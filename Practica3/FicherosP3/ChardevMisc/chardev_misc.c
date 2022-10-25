@@ -74,6 +74,7 @@ int init_module(void)
     dev_info(device, "I was assigned major number %d. To talk to\n", major);
     dev_info(device, "the driver try to cat and echo to /dev/%s.\n", DEVICE_NAME);
     dev_info(device, "Remove the module when done.\n");
+    printk(KERN_INFO "I was assigned minor number %d. To talk to\n", minor);
 
     return 0;
 }
