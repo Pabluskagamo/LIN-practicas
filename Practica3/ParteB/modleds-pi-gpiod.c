@@ -103,8 +103,14 @@ led_write(struct file *filp, const char *buff, size_t len, loff_t * off)
     }
 
     printk(KERN_INFO "Modleds: mask:%x", mask);
+
+    unsigned char bit0 = (mask & 0x1);
+		unsigned char bit1 = (mask >> 1) & 0x1;
+		unsigned char bit2 = (mask >> 2) & 0x1;
+
+		unsigned int new_mask = (bit0 << 2) | (bit1 << 1) | bit2;
     
-    set_pi_leds(mask);
+    set_pi_leds(new_mask);
 
     *off+=len;
 
