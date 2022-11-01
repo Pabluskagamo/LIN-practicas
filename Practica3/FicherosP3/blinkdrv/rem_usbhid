@@ -1,2 +1,3 @@
+#!/bin/bash
 rmmod usbhid
 modprobe usbhid quirks=0x20A0:0x41E5:0x0004

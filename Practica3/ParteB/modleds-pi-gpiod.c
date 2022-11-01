@@ -94,11 +94,15 @@ led_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 
     kbuf[len] = '\0';
 
-    int n;
-
-    if(sscanf(kbuf, "%x", &mask) != 1 && mask > 0x7){
+    if(sscanf(kbuf, "%x", &mask) != 1){
       return -EINVAL;
     }
+
+    if(mask > 0x7){
+      return -EINVAL;
+    }
+
+    printk(KERN_INFO "Modleds: mask:%x", mask);
     
     set_pi_leds(mask);
 
@@ -169,6 +173,18 @@ static int __init modleds_init(void)
       pr_err("class_create() failed \n");
       ret = PTR_ERR(class);
       goto error_class;
+  }
+
+  /* Establish function that will take care of setting up permissions for device file */
+  class->devnode = cool_devnode;
+
+  /* Creating device */
+  device = device_create(class, NULL, start, NULL, DEVICE_NAME);
+
+  if (IS_ERR(device)) {
+      pr_err("Device_create failed\n");
+      ret = PTR_ERR(device);
+      goto error_device;
   }
 
   major = MAJOR(start);
