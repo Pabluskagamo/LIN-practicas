@@ -5,6 +5,7 @@
 #include <asm-generic/errno.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
+#include <linux/ctype.h>
 
 MODULE_DESCRIPTION("Misc Display7s Kernel Module - FDI-UCM");
 MODULE_AUTHOR("Juan Carlos Saez");
@@ -28,6 +29,7 @@ MODULE_LICENSE("GPL");
 #define DS_E 0x9E
 #define DS_F 0x8E
 #define SEGMENT_COUNT 8
+#define BUF_LEN 80
 
 /* Indices of GPIOs used by this module */
 enum
@@ -104,21 +106,108 @@ static void update_7sdisplay(unsigned char data)
  * Test with the following command to see the sequence better:
  * $ while true; do echo > /dev/display7s; sleep 0.3; done
  */
+// static ssize_t
+// display7s_write(struct file *filp, const char *buff, size_t len, loff_t *off)
+// {
+// 	/* The variable is defined as static to have a counter value that persists across invocations of display7s_write */
+// 	static int counter = 0;
+
+// 	/* Update the corresponding value in the display */
+// 	update_7sdisplay(sequence[counter]);
+	
+// 	/* Update counter in preparation for next invocation of the function */
+// 	counter++;
+
+// 	/* Reset counter if end marker is found */
+// 	if (sequence[counter] == -1)
+// 		counter = 0;
+
+// 	return len;
+// }
+
 static ssize_t
 display7s_write(struct file *filp, const char *buff, size_t len, loff_t *off)
 {
-	/* The variable is defined as static to have a counter value that persists across invocations of display7s_write */
-	static int counter = 0;
+	char kbuf[BUF_LEN];
+    char n;
+
+    if((*off) > 0){
+      return 0;
+    }
+
+    if(len > BUF_LEN-1){
+      return -ENOSPC;
+    }
+
+    if(copy_from_user(kbuf, buff, len)){
+      return -EFAULT;
+    }
+
+    kbuf[len] = '\0';
+
+	if(sscanf(kbuf, "%c", &n) != 1){
+      return -EINVAL;
+    }
+
+	char mayus = toupper(n);
+
+    if(mayus < 0x30 || mayus > 0x46 || (mayus > 0x39 && mayus < 0x41)){
+      return -EINVAL;
+    } 
 
 	/* Update the corresponding value in the display */
-	update_7sdisplay(sequence[counter]);
-	
-	/* Update counter in preparation for next invocation of the function */
-	counter++;
+	switch(mayus){
+		case '0':
+			update_7sdisplay(DS_0);
+		break;
+		case '1':
+			update_7sdisplay(DS_1);
+		break;
+		case '2':
+			update_7sdisplay(DS_2);
+		break;
+		case '3':
+			update_7sdisplay(DS_3);
+		break;
+		case '4':
+			update_7sdisplay(DS_4);
+		break;
+		case '5':
+			update_7sdisplay(DS_5);
+		break;
+		case '6':
+			update_7sdisplay(DS_6);
+		break;
+		case '7':
+			update_7sdisplay(DS_7);
+		break;
+		case '8':
+			update_7sdisplay(DS_8);
+		break;
+		case '9':
+			update_7sdisplay(DS_9);
+		break;
+		case 'A':
+			update_7sdisplay(DS_A);
+		break;
+		case 'B':
+			update_7sdisplay(DS_B);
+		break;
+		case 'C':
+			update_7sdisplay(DS_C);
+		break;
+		case 'D':
+			update_7sdisplay(DS_D);
+		break;
+		case 'E':
+			update_7sdisplay(DS_E);
+		break;
+		case 'F':
+			update_7sdisplay(DS_F);
+		break;
+	}
 
-	/* Reset counter if end marker is found */
-	if (sequence[counter] == -1)
-		counter = 0;
+	*off+=len;
 
 	return len;
 }
