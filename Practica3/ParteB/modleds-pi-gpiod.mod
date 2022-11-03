@@ -1,0 +1,2 @@
+/home/kernel/Documentos/LIN-practicas/Practica3/ParteB/modleds-pi-gpiod.o
+

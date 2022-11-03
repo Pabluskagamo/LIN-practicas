@@ -49,7 +49,7 @@ struct gpio_desc *gpio_descriptors[NR_GPIO_DISPLAY];
 const char *display_gpio_str[NR_GPIO_DISPLAY] = {"sdi", "rclk", "srclk"};
 
 /* Sequence of segments used by the character device driver */
-const int sequence[] = {DS_0, DS_1, DS_2, DS_3, DS_4, DS_5, DS_6, DS_7, DS_8, DS_9, DS_A, DS_B, DS_C, DS_D, DS_E, DS_F, -1};
+const int sequence[] = {DS_0, DS_1, DS_2, DS_3, DS_4, DS_5, DS_6, DS_7, DS_8, DS_9, DS_A, DS_B, DS_C, DS_D, DS_E, DS_F};
 
 #define DEVICE_NAME "display7s" /* Device name */
 
@@ -101,35 +101,11 @@ static void update_7sdisplay(unsigned char data)
 	gpiod_set_value(gpio_descriptors[RCLK_IDX], 0);
 }
 
-/*
- * Called when a process writes to dev file: echo "hi" > /dev/display7s
- * Test with the following command to see the sequence better:
- * $ while true; do echo > /dev/display7s; sleep 0.3; done
- */
-// static ssize_t
-// display7s_write(struct file *filp, const char *buff, size_t len, loff_t *off)
-// {
-// 	/* The variable is defined as static to have a counter value that persists across invocations of display7s_write */
-// 	static int counter = 0;
-
-// 	/* Update the corresponding value in the display */
-// 	update_7sdisplay(sequence[counter]);
-	
-// 	/* Update counter in preparation for next invocation of the function */
-// 	counter++;
-
-// 	/* Reset counter if end marker is found */
-// 	if (sequence[counter] == -1)
-// 		counter = 0;
-
-// 	return len;
-// }
-
 static ssize_t
 display7s_write(struct file *filp, const char *buff, size_t len, loff_t *off)
 {
 	char kbuf[BUF_LEN];
-    char n;
+    unsigned int n;
 
     if((*off) > 0){
       return 0;
@@ -145,67 +121,15 @@ display7s_write(struct file *filp, const char *buff, size_t len, loff_t *off)
 
     kbuf[len] = '\0';
 
-	if(sscanf(kbuf, "%c", &n) != 1){
+	if(sscanf(kbuf, "%x", &n) != 1){
       return -EINVAL;
     }
 
-	char mayus = toupper(n);
-
-    if(mayus < 0x30 || mayus > 0x46 || (mayus > 0x39 && mayus < 0x41)){
-      return -EINVAL;
-    } 
-
-	/* Update the corresponding value in the display */
-	switch(mayus){
-		case '0':
-			update_7sdisplay(DS_0);
-		break;
-		case '1':
-			update_7sdisplay(DS_1);
-		break;
-		case '2':
-			update_7sdisplay(DS_2);
-		break;
-		case '3':
-			update_7sdisplay(DS_3);
-		break;
-		case '4':
-			update_7sdisplay(DS_4);
-		break;
-		case '5':
-			update_7sdisplay(DS_5);
-		break;
-		case '6':
-			update_7sdisplay(DS_6);
-		break;
-		case '7':
-			update_7sdisplay(DS_7);
-		break;
-		case '8':
-			update_7sdisplay(DS_8);
-		break;
-		case '9':
-			update_7sdisplay(DS_9);
-		break;
-		case 'A':
-			update_7sdisplay(DS_A);
-		break;
-		case 'B':
-			update_7sdisplay(DS_B);
-		break;
-		case 'C':
-			update_7sdisplay(DS_C);
-		break;
-		case 'D':
-			update_7sdisplay(DS_D);
-		break;
-		case 'E':
-			update_7sdisplay(DS_E);
-		break;
-		case 'F':
-			update_7sdisplay(DS_F);
-		break;
+	if(n > -1 && n < 16){
+		return -EINVAL;
 	}
+
+	update_7sdisplay(sequence[n]);
 
 	*off+=len;
 
