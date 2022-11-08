@@ -145,7 +145,6 @@ static char *cool_devnode(struct device *dev, umode_t *mode)
 static int __init modleds_init(void)
 {
   int i, j;
-  int err = 0;
   char gpio_str[10];
 
   int major;      /* Major number assigned to our device driver */
@@ -156,7 +155,7 @@ static int __init modleds_init(void)
     /* Build string ID */
     sprintf(gpio_str, "led_%d", i);
     /* Request GPIO */
-    if ((err = gpio_request(led_gpio[i], gpio_str))) {
+    if ((ret = gpio_request(led_gpio[i], gpio_str))) {
       pr_err("Failed GPIO[%d] %d request\n", i, led_gpio[i]);
       goto err_handle;
     }
@@ -164,7 +163,7 @@ static int __init modleds_init(void)
     /* Transforming into descriptor */
     if (!(gpio_descriptors[i] = gpio_to_desc(led_gpio[i]))) {
       pr_err("GPIO[%d] %d is not valid\n", i, led_gpio[i]);
-      err = -EINVAL;
+      ret = -EINVAL;
       goto err_handle;
     }
 
@@ -218,11 +217,8 @@ static int __init modleds_init(void)
 
   return 0;
 
+//Cambiar orden.
 
-err_handle:
-  for (j = 0; j < i; j++)
-    gpiod_put(gpio_descriptors[j]);
-  ret = err;
 error_device:
     class_destroy(class);
 error_class:
@@ -237,6 +233,10 @@ error_add:
         kobject_put(&pileds->kobj);
 error_alloc:
     unregister_chrdev_region(start, 1);
+err_handle:
+  for (j = 0; j < i; j++)
+    gpiod_put(gpio_descriptors[j]);
+  
 
     return ret;
 }
