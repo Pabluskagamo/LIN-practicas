@@ -5,6 +5,8 @@
 #include <linux/uaccess.h>
 #include <linux/cdev.h>
 #include <linux/fs.h>
+#include <linux/semaphore.h>
+#include <linux/kfifo.h>
 
 #define ALL_LEDS_ON 0x7
 #define ALL_LEDS_OFF 0
@@ -15,15 +17,16 @@ MODULE_AUTHOR("Juan Carlos Saez");
 MODULE_LICENSE("GPL");
 
 #define SUCCESS 0
-#define DEVICE_NAME "prodcons "
+#define DEVICE_NAME "prodcons"
 #define CLASS_NAME "pr4parteb"
 #define BUF_LEN 80
 #define MAX_ITEMS_CBUF 4
 
 struct kfifo cbuf;
+struct semaphore elementos, huecos, mtx;
 
 static dev_t start;
-static struct cdev *pileds;
+static struct cdev *prodcons;
 static struct class *class = NULL;
 static struct device *device = NULL;
 
@@ -31,9 +34,6 @@ static int Device_Open = 0;
 
 static int prodcon_open(struct inode *inode, struct file *file)
 {
-    if (Device_Open)
-        return -EBUSY;
-
     Device_Open++;
 
     // HACER LAS COSAS.
@@ -57,21 +57,33 @@ static int prodcon_release(struct inode *inode, struct file *file)
     return 0;
 }
 
-ssize_t prodcons_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
+ssize_t prodcon_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
 {
-    char kbuf[MAX_CHARS_KBUF + 1];
+    char kbuf[BUF_LEN + 1];
     int nr_bytes = 0;
     int val;
     if ((*off) > 0)
         return 0;
     if (down_interruptible(&elementos))
         return -EINTR;
+
+    if(down_interruptible(&mtx)){
+        up(&elementos);
+        return -EINTR;
+    }
+
     /* Extraer el primer entero del buffer */
     kfifo_out(&cbuf, &val, sizeof(int));
+
+    up(&mtx);
     up(&huecos);
     nr_bytes = sprintf(kbuf, "%i\n", val);
 
-    ///... copy_to_user()...
+    if(copy_to_user(buf, kbuf, nr_bytes))
+        return -EINVAL;
+
+    (*off) += len;
+
     return nr_bytes;
 }
 
@@ -81,11 +93,29 @@ ssize_t prodcons_read(struct file *filp, char __user *buf, size_t len, loff_t *o
 static ssize_t
 prodcon_write(struct file *filp, const char *buff, size_t len, loff_t *off)
 {
-    char kbuf[MAX_CHARS_KBUF + 1];
+    char kbuf[BUF_LEN + 1];
     int val = 0;
-    ..copy_from_user() + Convertir char *a entero y almacenarlo en val..if (down_interruptible(&huecos)) return -EINTR;
+    //..copy_from_user() + Convertir char *a entero y almacenarlo en val..
+    if(copy_from_user(kbuf, buff, len))
+        return -EFAULT;
+
+    kbuf[len] = '\0';
+
+    if(sscanf(kbuf, "%i", &val) != 1){
+        return -EINVAL;
+    }
+
+    if (down_interruptible(&huecos)) 
+        return -EINTR;
+
+    if(down_interruptible(&mtx)){
+        up(&huecos);
+        return -EINTR;
+    }
+
     /* Inserción en el buffer circular */
     kfifo_in(&cbuf, &val, sizeof(int));
+    up(&mtx);
     up(&elementos);
     return len;
 }
@@ -117,16 +147,16 @@ static char *cool_devnode(struct device *dev, umode_t *mode)
 
 static int __init modleds_init(void)
 {
-    int i, j;
-
     int major; /* Major number assigned to our device driver */
     int minor; /* Minor number assigned to the associated character device */
     int ret;
 
     if (kfifo_alloc(&cbuf, MAX_ITEMS_CBUF * sizeof(int), GFP_KERNEL))
         return -ENOMEM;
+
     sema_init(&elementos, 0);
     sema_init(&huecos, MAX_ITEMS_CBUF);
+    sema_init(&mtx, 1);
 
     /* Get available (major,minor) range */
     if ((ret = alloc_chrdev_region(&start, 0, 1, DEVICE_NAME)))
@@ -136,16 +166,16 @@ static int __init modleds_init(void)
     }
 
     /* Create associated cdev */
-    if ((pileds = cdev_alloc()) == NULL)
+    if ((prodcons = cdev_alloc()) == NULL)
     {
         printk(KERN_INFO "cdev_alloc() failed ");
         ret = -ENOMEM;
         goto error_alloc;
     }
 
-    cdev_init(pileds, &fops);
+    cdev_init(prodcons, &fops);
 
-    if ((ret = cdev_add(pileds, start, 1)))
+    if ((ret = cdev_add(prodcons, start, 1)))
     {
         printk(KERN_INFO "cdev_add() failed ");
         goto error_add;
@@ -185,15 +215,15 @@ error_device:
     class_destroy(class);
 error_class:
     /* Destroy chardev */
-    if (pileds)
+    if (prodcons)
     {
-        cdev_del(pileds);
-        pileds = NULL;
+        cdev_del(prodcons);
+        prodcons = NULL;
     }
 error_add:
     /* Destroy partially initialized chardev */
-    if (pileds)
-        kobject_put(&pileds->kobj);
+    if (prodcons)
+        kobject_put(&prodcons->kobj);
 error_alloc:
     unregister_chrdev_region(start, 1);
 
@@ -202,8 +232,9 @@ error_alloc:
 
 static void __exit modleds_exit(void)
 {
-    int i = 0;
-
+    if (Device_Open)
+        return -EBUSY;
+        
     /* Destroy the device and the class */
     if (device)
         device_destroy(class, device->devt);
@@ -212,13 +243,15 @@ static void __exit modleds_exit(void)
         class_destroy(class);
 
     /* Destroy chardev */
-    if (pileds)
-        cdev_del(pileds);
+    if (prodcons)
+        cdev_del(prodcons);
 
     /*
      * Release major minor pair
      */
     unregister_chrdev_region(start, 1);
+
+    kfifo_free(&cbuf);
 }
 
 module_init(modleds_init);
