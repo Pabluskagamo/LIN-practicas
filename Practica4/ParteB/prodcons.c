@@ -7,6 +7,7 @@
 #include <linux/fs.h>
 #include <linux/semaphore.h>
 #include <linux/kfifo.h>
+#include <linux/moduleparam.h>
 
 #define ALL_LEDS_ON 0x7
 #define ALL_LEDS_OFF 0
@@ -25,12 +26,17 @@ MODULE_LICENSE("GPL");
 struct kfifo cbuf;
 struct semaphore elementos, huecos, mtx;
 
+static int kfifo_items = MAX_ITEMS_CBUF;
 static dev_t start;
 static struct cdev *prodcons;
 static struct class *class = NULL;
 static struct device *device = NULL;
 
+
 static int Device_Open = 0;
+
+module_param(kfifo_items, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+MODULE_PARM_DESC(kfifo_items, "Kfifo maximum elements");
 
 static int prodcon_open(struct inode *inode, struct file *file)
 {
@@ -151,11 +157,11 @@ static int __init modleds_init(void)
     int minor; /* Minor number assigned to the associated character device */
     int ret;
 
-    if (kfifo_alloc(&cbuf, MAX_ITEMS_CBUF * sizeof(int), GFP_KERNEL))
+    if (kfifo_alloc(&cbuf, kfifo_items * sizeof(int), GFP_KERNEL))
         return -ENOMEM;
 
     sema_init(&elementos, 0);
-    sema_init(&huecos, MAX_ITEMS_CBUF);
+    sema_init(&huecos, kfifo_items);
     sema_init(&mtx, 1);
 
     /* Get available (major,minor) range */
@@ -209,7 +215,6 @@ static int __init modleds_init(void)
 
     return 0;
 
-    // Cambiar orden.
 
 error_device:
     class_destroy(class);
@@ -226,6 +231,7 @@ error_add:
         kobject_put(&prodcons->kobj);
 error_alloc:
     unregister_chrdev_region(start, 1);
+	kfifo_free(&cbuf);
 
     return ret;
 }

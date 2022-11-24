@@ -24,7 +24,6 @@ struct list_item{
 struct list_head head;
 
 //Puntero a la cola para facilitar añadir elementos
-struct list_head *tail;
 
 void addElem(int n){
 	struct list_item *it = NULL;
@@ -35,9 +34,7 @@ void addElem(int n){
 	it->data = n; //meto el numero en it
 
 	write_lock(&rwl);
-	
-	list_add(&it->links, tail);
-	tail = &it->links;
+	list_add_tail(&it->links, &head);
 	write_unlock(&rwl);
 }
 
@@ -58,11 +55,7 @@ void removeElem(int n){
 			kfree(it);
 			printk(KERN_INFO "Modlist: %d removed from list\n", n);
 		}
-			
-		if(list_empty_careful(&head) == 1){
-			INIT_LIST_HEAD(&head);
-			tail = &head;
-		}
+
 	}
 
 	write_unlock(&rwl);
@@ -86,8 +79,6 @@ void cleanupList(void){
 
 	printk(KERN_INFO "Modlist: Cleanup list, List clean.\n");
 
-	INIT_LIST_HEAD(&head);
-	tail = &head;
 
 }
 
@@ -98,6 +89,7 @@ static ssize_t myproc_read(struct file *filp, char __user *buf, size_t len, loff
 	struct list_item* item = NULL;
 	struct list_head* cur_node = NULL;
 	char *wrptr = kbuf;
+	char test[10];
 	int nr_bytes = 0; //Numero de bytes que ocupa la lista en el buffer
 	
 	if ((*off) > 0) /* Tell the application that there is nothing left to read */
@@ -109,12 +101,13 @@ static ssize_t myproc_read(struct file *filp, char __user *buf, size_t len, loff
 
 		item = list_entry(cur_node, struct list_item, links);
 
+		n_bytes = sprintf(test, "%d\n", item->data);
+
 		//Comprobacion de que hay espacio en el buffer kbuf.
 		if((nr_bytes + n_bytes) >= (MAX_K - 1)){
 			printk(KERN_INFO "modlist: No es posible alamacenar mas elementos en el buffer\n");
 		}else{
-			n_bytes = sprintf(wrptr, "%d\n", item->data);
-			wrptr += n_bytes;
+			wrptr += sprintf(wrptr, "%d\n", item->data);
 			nr_bytes += n_bytes;
 		}
 	}
@@ -192,7 +185,6 @@ int modulo_lin_init(void)
     }
 	
 	INIT_LIST_HEAD(&head);
-	tail = &head;
 
 	/* Devolver 0 para indicar una carga correcta del módulo */
 	return ret;
