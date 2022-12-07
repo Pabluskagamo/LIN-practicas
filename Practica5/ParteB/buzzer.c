@@ -7,10 +7,18 @@
 #include <linux/pwm.h>
 #include <linux/workqueue.h>
 #include <linux/delay.h>
+#include <linux/timer.h>
+#include <linux/jiffies.h>
+#include <linux/gpio.h>
+#include <linux/interrupt.h>
 
 MODULE_DESCRIPTION("Test-buzzer Kernel Module - FDI-UCM");
 MODULE_AUTHOR("Juan Carlos Saez");
 MODULE_LICENSE("GPL");
+
+struct timer_list my_timer;
+
+#define MANUAL_DEBOUNCE
 
 /* Frequency of selected notes in centihertz */
 #define C4 26163
@@ -21,6 +29,10 @@ MODULE_LICENSE("GPL");
 #define C5 52325
 
 #define PWM_DEVICE_NAME "pwmchip0"
+#define GPIO_BUTTON 22
+
+struct gpio_desc* desc_button = NULL;
+static int gpio_button_irqn = -1;
 
 struct pwm_device *pwm_device = NULL;
 struct pwm_state pwm_state;
@@ -34,6 +46,32 @@ struct music_step
 	unsigned int freq : 24; /* Frequency in centihertz */
 	unsigned int len : 8;	/* Duration of the note */
 };
+
+static struct music_step melodic_line[] = {
+		{C4, 4}, {E4, 4}, {G4, 4}, {C5, 4}, 
+		{0, 2}, {C5, 4}, {G4, 4}, {E4, 4}, 
+		{C4, 4}, {0, 0} /* Terminator */
+};
+
+static const int beat = 120; /* 120 quarter notes per minute */
+static struct music_step *next = NULL;
+
+/* Interrupt handler for button **/
+static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
+{
+#ifdef MANUAL_DEBOUNCE
+  static unsigned long last_interrupt = 0;
+  unsigned long diff = jiffies - last_interrupt;
+  if (diff < 20)
+    return IRQ_HANDLED;
+
+  last_interrupt = jiffies;
+#endif
+	printk(KERN_INFO "Estoy en IRQ");
+	mod_timer(&my_timer, jiffies);  
+  return IRQ_HANDLED;
+}
+
 
 /* Transform frequency in centiHZ into period in nanoseconds */
 static inline unsigned int freq_to_period_ns(unsigned int frequency)
@@ -90,18 +128,11 @@ static inline int calculate_delay_ms(unsigned int note_len, unsigned int qnote_r
 /* Work's handler function */
 static void my_wq_function(struct work_struct *work)
 {
-	struct music_step melodic_line[] = {
-		{C4, 4}, {E4, 4}, {G4, 4}, {C5, 4}, 
-		{0, 2}, {C5, 4}, {G4, 4}, {E4, 4}, 
-		{C4, 4}, {0, 0} /* Terminator */
-	};
-	const int beat = 120; /* 120 quarter notes per minute */
-	struct music_step *next;
-
 	pwm_init_state(pwm_device, &pwm_state);
 
 	/* Play notes sequentially until end marker is found */
-	for (next = melodic_line; !is_end_marker(next); next++) {
+	if(!is_end_marker(next)) {
+		printk(KERN_INFO "Estoy en la workqueue %i", next->freq);
 		/* Obtain period from frequency */
 		pwm_state.period = freq_to_period_ns(next->freq);
 
@@ -124,33 +155,110 @@ static void my_wq_function(struct work_struct *work)
 		}
 
 		/* Wait for duration of the note or reset */
-		msleep(calculate_delay_ms(next->len, beat));
+		mod_timer(&my_timer, jiffies + msecs_to_jiffies(calculate_delay_ms(next->len, beat)));
+		next++;
+	}else{
+		pwm_disable(pwm_device);
 	}
 
-	pwm_disable(pwm_device);
+}
+
+
+/* Function invoked when timer expires (fires) */
+static void fire_timer(struct timer_list *timer)
+{
+	printk(KERN_INFO "Estoy en fire timer");
+
+	if(next == NULL){
+		next = melodic_line;
+	}else{
+		/* Initialize work structure (with function) */
+		INIT_WORK(&my_work, my_wq_function);
+		/* Enqueue work */
+		schedule_work(&my_work);
+	}
 }
 
 static int __init pwm_module_init(void)
 {
+	int err = 0;
+	unsigned char gpio_out_ok = 0;
+
+	/* Requesting Button's GPIO */
+	if ((err = gpio_request(GPIO_BUTTON, "button"))) {
+		pr_err("ERROR: GPIO %d request\n", GPIO_BUTTON);
+		goto err_handle;
+	}
+
+	/* Configure Button */
+	if (!(desc_button = gpio_to_desc(GPIO_BUTTON))) {
+		pr_err("GPIO %d is not valid\n", GPIO_BUTTON);
+		err = -EINVAL;
+		goto err_handle;
+	}
+
+	gpio_out_ok = 1;
+
+	//configure the BUTTON GPIO as input
+	gpiod_direction_input(desc_button);
+
+	/*
+	** The lines below are commented because gpiod_set_debounce is not supported
+	** in the Raspberry pi. Debounce is handled manually in this driver.
+	*/
+	#ifndef MANUAL_DEBOUNCE
+	//Debounce the button with a delay of 200ms
+	if (gpiod_set_debounce(desc_button, 200) < 0) {
+		pr_err("ERROR: gpio_set_debounce - %d\n", GPIO_BUTTON);
+		goto err_handle;
+	}
+	#endif
+
+	//Get the IRQ number for our GPIO
+	gpio_button_irqn = gpiod_to_irq(desc_button);
+	pr_info("IRQ Number = %d\n", gpio_button_irqn);
+
+	if (request_irq(gpio_button_irqn,             //IRQ number
+					gpio_irq_handler,   //IRQ handler
+					IRQF_TRIGGER_RISING,        //Handler will be called in raising edge
+					"button_leds",               //used to identify the device name using this IRQ
+					NULL)) {                    //device id for shared IRQ
+		pr_err("my_device: cannot register IRQ ");
+		goto err_handle;
+	}
 	/* Request utilization of PWM0 device */
 	pwm_device = pwm_request(0, PWM_DEVICE_NAME);
 
 	if (IS_ERR(pwm_device))
 		return PTR_ERR(pwm_device);
 
-	/* Initialize work structure (with function) */
-	INIT_WORK(&my_work, my_wq_function);
+	/* Create timer */
+    timer_setup(&my_timer, fire_timer, 0);
 
-	/* Enqueue work */
-	schedule_work(&my_work);
+	my_timer.expires = jiffies; /* Activate it one second from now */
+    /* Activate the timer for the first time */
+    add_timer(&my_timer);
+
+	printk(KERN_INFO "Modulo Buzzer cargado");
+
+	//schedule_work(&my_work);
 
 	return 0;
+
+err_handle:
+  if (gpio_out_ok)
+    gpiod_put(desc_button);
+
+  return err;
 }
 
 static void __exit pwm_module_exit(void)
 {
+	free_irq(gpio_button_irqn, NULL);
 	/* Wait until defferred work has finished */
 	flush_work(&my_work);
+
+	gpiod_put(desc_button);
 
 	/* Release PWM device */
 	pwm_free(pwm_device);
