@@ -11,6 +11,7 @@
 #include <linux/jiffies.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/vmalloc.h>
 
 MODULE_DESCRIPTION("Test-buzzer Kernel Module - FDI-UCM");
 MODULE_AUTHOR("Juan Carlos Saez");
@@ -27,6 +28,20 @@ struct timer_list my_timer;
 #define F4 34923
 #define G4 39200
 #define C5 52325
+
+
+#define SUCCESS 0
+#define DEVICE_NAME "buzzer"
+#define CLASS_NAME "pibuzzer"
+#define BUF_LEN 80
+
+static dev_t start;
+static struct cdev* buzzer;
+static struct class* class = NULL;
+static struct device* device = NULL;
+
+static int Device_Open = 0;
+
 
 #define PWM_DEVICE_NAME "pwmchip0"
 #define GPIO_BUTTON 22
@@ -47,7 +62,9 @@ struct music_step
 	unsigned int len : 8;	/* Duration of the note */
 };
 
-static struct music_step melodic_line[] = {
+struct music_step *melody;
+
+static struct music_step default_melody[] = {
 		{C4, 4}, {E4, 4}, {G4, 4}, {C5, 4}, 
 		{0, 2}, {C5, 4}, {G4, 4}, {E4, 4}, 
 		{C4, 4}, {0, 0} /* Terminator */
@@ -55,6 +72,101 @@ static struct music_step melodic_line[] = {
 
 static const int beat = 120; /* 120 quarter notes per minute */
 static struct music_step *next = NULL;
+
+
+static int buzzer_open(struct inode *inode, struct file *file)
+{
+    if (Device_Open)
+        return -EBUSY;
+
+    Device_Open++;
+
+    //HACER LAS COSAS.
+
+    /* Increment the module's reference counter */
+    try_module_get(THIS_MODULE);
+
+    return SUCCESS;
+}
+
+static int buzzer_release(struct inode *inode, struct file *file)
+{
+    Device_Open--;      /* We're now ready for our next caller */
+
+    /*
+     * Decrement the usage count, or else once you opened the file, you'll
+     * never get get rid of the module.
+     */
+    module_put(THIS_MODULE);
+
+    return 0;
+}
+
+static ssize_t
+buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
+{ 
+    char kbuf[BUF_LEN];
+	char *token;
+	char* puntero;
+	int retval = 0;
+
+    if((*off) > 0){
+      return 0;
+    }
+
+    if(len > BUF_LEN-1){
+      return -ENOSPC;
+    }
+
+    if(copy_from_user(kbuf, buff, len)){
+      return -EFAULT;
+    }
+
+	kbuf[len] = '\0';
+
+	if(strncmp(kbuf, "music", 5) == 0){
+		token = strsep(&puntero, ",");
+
+		while(token != NULL){
+			unsigned int freq, dur;
+					
+			if(sscanf(token, "%u:%x", &freq, &dur) != 2){
+				retval = -EINVAL;
+				goto out_error;
+			}
+					
+			//CREAR NOTA MUSICAL E INTRODUCIRLA EN LA MELODIA.
+
+			token = strsep(&puntero, ",");
+		}
+	}else if(strncmp(kbuf, "beat", 4) == 0){
+		//Cambiar el Beat.
+	}else{
+		return -EINVAL;
+	}
+    
+    *off+=len;
+
+    return len;
+out_error:
+	//kfree(message);
+	return retval;	
+}
+
+static const struct file_operations fops = {
+  .write = buzzer_write,
+  .open = buzzer_open,
+  .release = buzzer_release,
+};
+
+static char *cool_devnode(struct device *dev, umode_t *mode)
+{
+    if (!mode)
+        return NULL;
+    if (MAJOR(dev->devt) == MAJOR(start))
+        *mode = 0666;
+    return NULL;
+}
 
 /* Interrupt handler for button **/
 static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
@@ -170,7 +282,7 @@ static void fire_timer(struct timer_list *timer)
 	printk(KERN_INFO "Estoy en fire timer");
 
 	if(next == NULL){
-		next = melodic_line;
+		next = melody;
 	}else{
 		/* Initialize work structure (with function) */
 		INIT_WORK(&my_work, my_wq_function);
@@ -183,6 +295,8 @@ static int __init pwm_module_init(void)
 {
 	int err = 0;
 	unsigned char gpio_out_ok = 0;
+	int major;      /* Major number assigned to our device driver */
+  	int minor;      /* Minor number assigned to the associated character device */
 
 	/* Requesting Button's GPIO */
 	if ((err = gpio_request(GPIO_BUTTON, "button"))) {
@@ -232,6 +346,12 @@ static int __init pwm_module_init(void)
 	if (IS_ERR(pwm_device))
 		return PTR_ERR(pwm_device);
 
+	melody = vmalloc(PAGE_SIZE);
+
+	if(!melody){
+		goto err_handle;
+	}
+
 	/* Create timer */
     timer_setup(&my_timer, fire_timer, 0);
 
@@ -239,12 +359,69 @@ static int __init pwm_module_init(void)
     /* Activate the timer for the first time */
     add_timer(&my_timer);
 
-	printk(KERN_INFO "Modulo Buzzer cargado");
+	/* Get available (major,minor) range */
+	if ((err = alloc_chrdev_region (&start, 0, 1, DEVICE_NAME))) {
+		printk(KERN_INFO "Can't allocate chrdev_region()");
+		return err;
+	}
 
-	//schedule_work(&my_work);
+	/* Create associated cdev */
+	if ((buzzer = cdev_alloc()) == NULL) {
+		printk(KERN_INFO "cdev_alloc() failed ");
+		err = -ENOMEM;
+		goto error_alloc;
+	}
+
+	cdev_init(buzzer, &fops);
+
+	if ((err = cdev_add(buzzer, start, 1))) {
+		printk(KERN_INFO "cdev_add() failed ");
+		goto error_add;
+	}
+
+	/* Create custom class */
+	class = class_create(THIS_MODULE, CLASS_NAME);
+
+	if (IS_ERR(class)) {
+		pr_err("class_create() failed \n");
+		err = PTR_ERR(class);
+		goto error_class;
+	}
+
+	/* Establish function that will take care of setting up permissions for device file */
+	class->devnode = cool_devnode;
+
+	/* Creating device */
+	device = device_create(class, NULL, start, NULL, DEVICE_NAME);
+
+	if (IS_ERR(device)) {
+		pr_err("Device_create failed\n");
+		err = PTR_ERR(device);
+		goto error_device;
+	}
+
+	major = MAJOR(start);
+	minor = MINOR(start);
+
+	printk(KERN_INFO "Modulo Buzzer cargado");
 
 	return 0;
 
+error_device:
+    class_destroy(class);
+
+error_class:
+    /* Destroy chardev */
+    if (buzzer) {
+        cdev_del(buzzer);
+        buzzer = NULL;
+    }
+error_add:
+    /* Destroy partially initialized chardev */
+    if (buzzer)
+        kobject_put(&buzzer->kobj);
+error_alloc:
+    unregister_chrdev_region(start, 1);
 err_handle:
   if (gpio_out_ok)
     gpiod_put(desc_button);
@@ -254,6 +431,22 @@ err_handle:
 
 static void __exit pwm_module_exit(void)
 {
+	/* Destroy the device and the class */
+	if (device)
+		device_destroy(class, device->devt);
+
+	if (class)
+		class_destroy(class);
+
+	/* Destroy chardev */
+	if (buzzer)
+		cdev_del(buzzer);
+
+	/*
+	* Release major minor pair
+	*/
+	unregister_chrdev_region(start, 1);
+
 	free_irq(gpio_button_irqn, NULL);
 	/* Wait until defferred work has finished */
 	flush_work(&my_work);
