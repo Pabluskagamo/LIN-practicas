@@ -70,7 +70,7 @@ static struct music_step default_melody[] = {
 		{C4, 4}, {0, 0} /* Terminator */
 };
 
-static const int beat = 120; /* 120 quarter notes per minute */
+static int beat = 120; /* 120 quarter notes per minute */
 static struct music_step *next = NULL;
 
 
@@ -109,6 +109,8 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 	char *token;
 	char* puntero;
 	int retval = 0;
+	int readBeat;
+	struct music_step *aux;
 
     if((*off) > 0){
       return 0;
@@ -124,9 +126,11 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 
 	kbuf[len] = '\0';
 
+
 	if(strncmp(kbuf, "music", 5) == 0){
 		token = strsep(&puntero, ",");
 
+		aux = melody;
 		while(token != NULL){
 			unsigned int freq, dur;
 					
@@ -135,12 +139,16 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 				goto out_error;
 			}
 					
-			//CREAR NOTA MUSICAL E INTRODUCIRLA EN LA MELODIA.
+			aux->freq = freq;
+			aux->len = dur;
+			aux++;
 
 			token = strsep(&puntero, ",");
 		}
-	}else if(strncmp(kbuf, "beat", 4) == 0){
-		//Cambiar el Beat.
+		aux->freq = 0;
+		aux->len = 0;
+	}else if(sscanf(kbuf, "beat %i", &readBeat) == 1){
+		beat = readBeat;
 	}else{
 		return -EINVAL;
 	}
@@ -153,10 +161,29 @@ out_error:
 	return retval;	
 }
 
+ssize_t buzzer_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
+{
+    char kbuf[BUF_LEN + 1];
+    int nr_bytes = 0;
+
+    if ((*off) > 0)
+        return 0;
+    
+    nr_bytes = sprintf(kbuf, "beat=%i\n", beat);
+
+    if(copy_to_user(buf, kbuf, nr_bytes))
+        return -EINVAL;
+
+    (*off) += len;
+
+    return nr_bytes;
+}
+
 static const struct file_operations fops = {
   .write = buzzer_write,
   .open = buzzer_open,
   .release = buzzer_release,
+  .read = buzzer_read
 };
 
 static char *cool_devnode(struct device *dev, umode_t *mode)
@@ -291,6 +318,20 @@ static void fire_timer(struct timer_list *timer)
 	}
 }
 
+static void init_defaultMelody(void){
+	struct music_step *aux;
+	struct music_step *nextMel = melody;
+
+	for(aux = default_melody; !is_end_marker(aux); aux++){
+		nextMel->freq = aux->freq;
+		nextMel->len = aux->len;
+		nextMel++;
+	}
+	nextMel->freq = 0;
+	nextMel->len = 0;
+
+}
+
 static int __init pwm_module_init(void)
 {
 	int err = 0;
@@ -350,6 +391,8 @@ static int __init pwm_module_init(void)
 
 	if(!melody){
 		goto err_handle;
+	}else{
+		init_defaultMelody();
 	}
 
 	/* Create timer */
