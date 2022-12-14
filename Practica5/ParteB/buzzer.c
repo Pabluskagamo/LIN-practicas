@@ -33,7 +33,7 @@ struct timer_list my_timer;
 #define SUCCESS 0
 #define DEVICE_NAME "buzzer"
 #define CLASS_NAME "pibuzzer"
-#define BUF_LEN 80
+#define BUF_LEN 2048 //Momentaneamente.
 
 static dev_t start;
 static struct cdev* buzzer;
@@ -127,7 +127,8 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 	kbuf[len] = '\0';
 
 
-	if(strncmp(kbuf, "music", 5) == 0){
+	if(sscanf(kbuf, "music %s", &kbuf) == 1){
+		puntero = kbuf;
 		token = strsep(&puntero, ",");
 
 		aux = melody;
@@ -297,6 +298,7 @@ static void my_wq_function(struct work_struct *work)
 		mod_timer(&my_timer, jiffies + msecs_to_jiffies(calculate_delay_ms(next->len, beat)));
 		next++;
 	}else{
+		next = melody;
 		pwm_disable(pwm_device);
 	}
 
@@ -338,6 +340,15 @@ static int __init pwm_module_init(void)
 	unsigned char gpio_out_ok = 0;
 	int major;      /* Major number assigned to our device driver */
   	int minor;      /* Minor number assigned to the associated character device */
+
+
+	/* Create timer */
+    timer_setup(&my_timer, fire_timer, 0);
+
+	my_timer.expires = jiffies; /* Activate it one second from now */
+
+	/* Activate the timer for the first time */
+    add_timer(&my_timer);
 
 	/* Requesting Button's GPIO */
 	if ((err = gpio_request(GPIO_BUTTON, "button"))) {
@@ -395,12 +406,6 @@ static int __init pwm_module_init(void)
 		init_defaultMelody();
 	}
 
-	/* Create timer */
-    timer_setup(&my_timer, fire_timer, 0);
-
-	my_timer.expires = jiffies; /* Activate it one second from now */
-    /* Activate the timer for the first time */
-    add_timer(&my_timer);
 
 	/* Get available (major,minor) range */
 	if ((err = alloc_chrdev_region (&start, 0, 1, DEVICE_NAME))) {
