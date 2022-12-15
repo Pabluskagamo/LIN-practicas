@@ -12,6 +12,7 @@
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/vmalloc.h>
+#include <linux/spinlock.h>
 
 MODULE_DESCRIPTION("Test-buzzer Kernel Module - FDI-UCM");
 MODULE_AUTHOR("Juan Carlos Saez");
@@ -33,7 +34,7 @@ struct timer_list my_timer;
 #define SUCCESS 0
 #define DEVICE_NAME "buzzer"
 #define CLASS_NAME "pibuzzer"
-#define BUF_LEN 2048 //Momentaneamente.
+#define BUF_LEN 80 //Momentaneamente.
 
 static dev_t start;
 static struct cdev* buzzer;
@@ -71,17 +72,37 @@ static struct music_step default_melody[] = {
 };
 
 static int beat = 120; /* 120 quarter notes per minute */
+
+static spinlock_t lock;
+
 static struct music_step *next = NULL;
 
+typedef enum{
+	BUZZER_STOPPED,
+	BUZZER_PAUSED,
+	BUZZER_PLAYING
+} buzzer_state_t;
+
+static buzzer_state_t buzzer_state = BUZZER_STOPPED;
+
+typedef enum{
+	REQUEST_START,
+	REQUEST_RESUME,
+	REQUEST_PAUSE,
+	REQUEST_CONFIG,
+	REQUEST_NONE,
+} buzzer_request_t;
+
+static buzzer_request_t buzzer_request = REQUEST_NONE;
 
 static int buzzer_open(struct inode *inode, struct file *file)
 {
-    if (Device_Open)
-        return -EBUSY;
-
-    Device_Open++;
-
-    //HACER LAS COSAS.
+	unsigned long flags;
+	//spin_lock_irqsave(&lock, flags);
+    if (buzzer_state == BUZZER_PLAYING){
+		return -EBUSY;
+	}
+	//spin_unlock_irqrestore(&lock, flags);
 
     /* Increment the module's reference counter */
     try_module_get(THIS_MODULE);
@@ -91,6 +112,8 @@ static int buzzer_open(struct inode *inode, struct file *file)
 
 static int buzzer_release(struct inode *inode, struct file *file)
 {
+	
+
     Device_Open--;      /* We're now ready for our next caller */
 
     /*
@@ -105,7 +128,8 @@ static int buzzer_release(struct inode *inode, struct file *file)
 static ssize_t
 buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 { 
-    char kbuf[BUF_LEN];
+    char *kbuf;
+	unsigned long flags;
 	char *token;
 	char* puntero;
 	int retval = 0;
@@ -116,7 +140,10 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
       return 0;
     }
 
-    if(len > BUF_LEN-1){
+	kbuf = vmalloc(PAGE_SIZE);
+
+    if(len > PAGE_SIZE-1){
+		vfree(kbuf);
       return -ENOSPC;
     }
 
@@ -127,7 +154,11 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 	kbuf[len] = '\0';
 
 
-	if(sscanf(kbuf, "music %s", &kbuf) == 1){
+	if(sscanf(kbuf, "music %s", kbuf) == 1){
+		spin_lock_irqsave(&lock, flags);
+		buzzer_request = REQUEST_CONFIG;
+		spin_unlock_irqrestore(&lock, flags);
+
 		puntero = kbuf;
 		token = strsep(&puntero, ",");
 
@@ -148,6 +179,7 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 		}
 		aux->freq = 0;
 		aux->len = 0;
+		next = melody;
 	}else if(sscanf(kbuf, "beat %i", &readBeat) == 1){
 		beat = readBeat;
 	}else{
@@ -158,7 +190,7 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 
     return len;
 out_error:
-	//kfree(message);
+	vfree(kbuf);
 	return retval;	
 }
 
@@ -194,22 +226,6 @@ static char *cool_devnode(struct device *dev, umode_t *mode)
     if (MAJOR(dev->devt) == MAJOR(start))
         *mode = 0666;
     return NULL;
-}
-
-/* Interrupt handler for button **/
-static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
-{
-#ifdef MANUAL_DEBOUNCE
-  static unsigned long last_interrupt = 0;
-  unsigned long diff = jiffies - last_interrupt;
-  if (diff < 20)
-    return IRQ_HANDLED;
-
-  last_interrupt = jiffies;
-#endif
-	printk(KERN_INFO "Estoy en IRQ");
-	mod_timer(&my_timer, jiffies);  
-  return IRQ_HANDLED;
 }
 
 
@@ -268,37 +284,58 @@ static inline int calculate_delay_ms(unsigned int note_len, unsigned int qnote_r
 /* Work's handler function */
 static void my_wq_function(struct work_struct *work)
 {
-	pwm_init_state(pwm_device, &pwm_state);
+	unsigned long flags;
 
-	/* Play notes sequentially until end marker is found */
-	if(!is_end_marker(next)) {
-		printk(KERN_INFO "Estoy en la workqueue %i", next->freq);
-		/* Obtain period from frequency */
-		pwm_state.period = freq_to_period_ns(next->freq);
+	spin_lock_irqsave(&lock, flags);
+	if(buzzer_request == REQUEST_START){
+		buzzer_state = BUZZER_PLAYING;
+	}else if(buzzer_request == REQUEST_RESUME){
+		buzzer_state = BUZZER_PLAYING;
+	}else if(buzzer_request == REQUEST_PAUSE){
+		buzzer_state = BUZZER_PAUSED;
+	}
 
-		/**
-		 * Disable temporarily to allow repeating the same consecutive
-		 * notes in the melodic line
-		 **/
-		pwm_disable(pwm_device);
+	buzzer_request = REQUEST_NONE;
 
-		/* If period==0, its a rest (silent note) */
-		if (pwm_state.period > 0) {
-			/* Set duty cycle to 70 to maintain the same timbre */
-			pwm_set_relative_duty_cycle(&pwm_state, 70, 100);
-			pwm_state.enabled = true;
-			/* Apply state */
-			pwm_apply_state(pwm_device, &pwm_state);
-		} else {
-			/* Disable for rest */
+	spin_unlock_irqrestore(&lock, flags);
+
+	if(buzzer_state == BUZZER_PLAYING){
+		pwm_init_state(pwm_device, &pwm_state);
+
+		/* Play notes sequentially until end marker is found */
+		if(!is_end_marker(next)) {
+			printk(KERN_INFO "Estoy en la workqueue %i", next->freq);
+			/* Obtain period from frequency */
+			pwm_state.period = freq_to_period_ns(next->freq);
+
+			/**
+			 * Disable temporarily to allow repeating the same consecutive
+			 * notes in the melodic line
+			 **/
+			pwm_disable(pwm_device);
+
+			/* If period==0, its a rest (silent note) */
+			if (pwm_state.period > 0) {
+				/* Set duty cycle to 70 to maintain the same timbre */
+				pwm_set_relative_duty_cycle(&pwm_state, 70, 100);
+				pwm_state.enabled = true;
+				/* Apply state */
+				pwm_apply_state(pwm_device, &pwm_state);
+			} else {
+				/* Disable for rest */
+				pwm_disable(pwm_device);
+			}
+
+			/* Wait for duration of the note or reset */
+			mod_timer(&my_timer, jiffies + msecs_to_jiffies(calculate_delay_ms(next->len, beat)));
+			next++;
+		}else{
+			next = melody;
+			buzzer_state = BUZZER_STOPPED;
+			buzzer_request = REQUEST_NONE;
 			pwm_disable(pwm_device);
 		}
-
-		/* Wait for duration of the note or reset */
-		mod_timer(&my_timer, jiffies + msecs_to_jiffies(calculate_delay_ms(next->len, beat)));
-		next++;
 	}else{
-		next = melody;
 		pwm_disable(pwm_device);
 	}
 
@@ -308,16 +345,10 @@ static void my_wq_function(struct work_struct *work)
 /* Function invoked when timer expires (fires) */
 static void fire_timer(struct timer_list *timer)
 {
-	printk(KERN_INFO "Estoy en fire timer");
-
-	if(next == NULL){
-		next = melody;
-	}else{
-		/* Initialize work structure (with function) */
-		INIT_WORK(&my_work, my_wq_function);
-		/* Enqueue work */
-		schedule_work(&my_work);
-	}
+	/* Initialize work structure (with function) */
+	//INIT_WORK(&my_work, my_wq_function);
+	/* Enqueue work */
+	schedule_work(&my_work);
 }
 
 static void init_defaultMelody(void){
@@ -334,6 +365,40 @@ static void init_defaultMelody(void){
 
 }
 
+/* Interrupt handler for button **/
+static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
+{
+  unsigned long flags;
+#ifdef MANUAL_DEBOUNCE
+  static unsigned long last_interrupt = 0;
+  unsigned long diff = jiffies - last_interrupt;
+  if (diff < 20)
+    return IRQ_HANDLED;
+
+  last_interrupt = jiffies;
+#endif
+
+	spin_lock_irqsave(&lock, flags);
+	if(buzzer_state == BUZZER_STOPPED){
+		buzzer_request = REQUEST_START;
+		/* Initialize work structure (with function) */
+		INIT_WORK(&my_work, my_wq_function);
+		/* Enqueue work */
+		schedule_work(&my_work);
+	}else if(buzzer_state == BUZZER_PAUSED){
+		buzzer_request = REQUEST_RESUME;
+		/* Initialize work structure (with function) */
+		INIT_WORK(&my_work, my_wq_function);
+		/* Enqueue work */
+		schedule_work(&my_work);		
+	}else if(buzzer_state == BUZZER_PLAYING){
+		buzzer_request = REQUEST_PAUSE;
+	}
+	spin_unlock_irqrestore(&lock, flags);
+
+  return IRQ_HANDLED;
+}
+
 static int __init pwm_module_init(void)
 {
 	int err = 0;
@@ -341,6 +406,7 @@ static int __init pwm_module_init(void)
 	int major;      /* Major number assigned to our device driver */
   	int minor;      /* Minor number assigned to the associated character device */
 
+	spin_lock_init(&lock);
 
 	/* Create timer */
     timer_setup(&my_timer, fire_timer, 0);
@@ -399,6 +465,7 @@ static int __init pwm_module_init(void)
 		return PTR_ERR(pwm_device);
 
 	melody = vmalloc(PAGE_SIZE);
+	next = melody;
 
 	if(!melody){
 		goto err_handle;
