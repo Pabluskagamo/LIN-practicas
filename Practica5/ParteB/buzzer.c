@@ -14,7 +14,7 @@
 #include <linux/vmalloc.h>
 #include <linux/spinlock.h>
 
-MODULE_DESCRIPTION("Test-buzzer Kernel Module - FDI-UCM");
+MODULE_DESCRIPTION("Buzzer Kernel Module Practica5 LIN - FDI-UCM");
 MODULE_AUTHOR("Juan Carlos Saez");
 MODULE_LICENSE("GPL");
 
@@ -34,7 +34,7 @@ struct timer_list my_timer;
 #define SUCCESS 0
 #define DEVICE_NAME "buzzer"
 #define CLASS_NAME "pibuzzer"
-#define BUF_LEN 80 //Momentaneamente.
+#define BUF_LEN 80 
 
 static dev_t start;
 static struct cdev* buzzer;
@@ -97,13 +97,6 @@ static buzzer_request_t buzzer_request = REQUEST_NONE;
 
 static int buzzer_open(struct inode *inode, struct file *file)
 {
-	unsigned long flags;
-	//spin_lock_irqsave(&lock, flags);
-    if (buzzer_state == BUZZER_PLAYING){
-		return -EBUSY;
-	}
-	//spin_unlock_irqrestore(&lock, flags);
-
     /* Increment the module's reference counter */
     try_module_get(THIS_MODULE);
 
@@ -143,18 +136,28 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 	kbuf = vmalloc(PAGE_SIZE);
 
     if(len > PAGE_SIZE-1){
-		vfree(kbuf);
-      return -ENOSPC;
+      retval = -ENOSPC;
+	  goto out_error;
     }
 
     if(copy_from_user(kbuf, buff, len)){
-      return -EFAULT;
+      retval = -EFAULT;
+	  goto out_error;
     }
 
 	kbuf[len] = '\0';
 
-
 	if(sscanf(kbuf, "music %s", kbuf) == 1){
+		unsigned long flags;
+
+		spin_lock_irqsave(&lock, flags);
+		if (buzzer_state == BUZZER_PLAYING){
+			spin_unlock_irqrestore(&lock, flags);
+			retval = -EBUSY;
+			goto out_error;
+		}
+		spin_unlock_irqrestore(&lock, flags);
+
 		spin_lock_irqsave(&lock, flags);
 		buzzer_request = REQUEST_CONFIG;
 		spin_unlock_irqrestore(&lock, flags);
@@ -183,10 +186,13 @@ buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 	}else if(sscanf(kbuf, "beat %i", &readBeat) == 1){
 		beat = readBeat;
 	}else{
-		return -EINVAL;
+		retval = -EINVAL;
+		goto out_error;
 	}
     
     *off+=len;
+
+	vfree(kbuf);
 
     return len;
 out_error:
@@ -345,8 +351,6 @@ static void my_wq_function(struct work_struct *work)
 /* Function invoked when timer expires (fires) */
 static void fire_timer(struct timer_list *timer)
 {
-	/* Initialize work structure (with function) */
-	//INIT_WORK(&my_work, my_wq_function);
 	/* Enqueue work */
 	schedule_work(&my_work);
 }
@@ -380,15 +384,11 @@ static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
 
 	spin_lock_irqsave(&lock, flags);
 	if(buzzer_state == BUZZER_STOPPED){
-		buzzer_request = REQUEST_START;
-		/* Initialize work structure (with function) */
-		INIT_WORK(&my_work, my_wq_function);
 		/* Enqueue work */
+		buzzer_request = REQUEST_START;
 		schedule_work(&my_work);
 	}else if(buzzer_state == BUZZER_PAUSED){
 		buzzer_request = REQUEST_RESUME;
-		/* Initialize work structure (with function) */
-		INIT_WORK(&my_work, my_wq_function);
 		/* Enqueue work */
 		schedule_work(&my_work);		
 	}else if(buzzer_state == BUZZER_PLAYING){
@@ -406,7 +406,10 @@ static int __init pwm_module_init(void)
 	int major;      /* Major number assigned to our device driver */
   	int minor;      /* Minor number assigned to the associated character device */
 
+	/* Create spinlock */
 	spin_lock_init(&lock);
+
+	INIT_WORK(&my_work, my_wq_function);
 
 	/* Create timer */
     timer_setup(&my_timer, fire_timer, 0);
