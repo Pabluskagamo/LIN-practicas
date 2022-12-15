@@ -122,7 +122,6 @@ static ssize_t
 buzzer_write(struct file *filp, const char *buff, size_t len, loff_t * off)
 { 
     char *kbuf;
-	unsigned long flags;
 	char *token;
 	char* puntero;
 	int retval = 0;
